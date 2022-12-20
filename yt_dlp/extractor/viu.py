@@ -148,7 +148,7 @@ class ViuPlaylistIE(ViuBaseIE):
 class ViuOTTIE(InfoExtractor):
     IE_NAME = 'viu:ott'
     _NETRC_MACHINE = 'viu'
-    _VALID_URL = r'https?://(?:www\.)?viu\.com/ott/(?P<country_code>[a-z]{2})/(?P<lang_code>[a-z]{2}-[a-z]{2})/vod/(?P<id>\d+)'
+    _VALID_URL = r'https?://(?:www\.)?viu\.com/ott/(?P<country_code>[a-z]{2})/(?P<lang_code>[a-z]{2}-[a-z]{2}|[a-z]{2})/vod/(?P<id>\d+)'
     _TESTS = [{
         'url': 'http://www.viu.com/ott/sg/en-us/vod/3421/The%20Prime%20Minister%20and%20I',
         'info_dict': {
@@ -193,6 +193,35 @@ class ViuOTTIE(InfoExtractor):
             'noplaylist': False,
         },
         'skip': 'Geo-restricted to Hong Kong',
+    }, {
+        'url': 'https://www.viu.com/ott/th/th/vod/463125/Reborn-Rich',
+        'info_dict': {
+            'id': '463125',
+            'ext': 'mp4',
+            'title': 'ตอนที่ 1',
+            'description': 'md5:f537e7a8851074ec457a06459068aa04',
+            'episode_number': 1,
+            'duration': 4831,
+            'episode': 'ตอนที่ 1',
+            'series': 'Reborn Rich',
+            'thumbnail': 'https://d2anahhhmp1ffz.cloudfront.net/1147412452/fafa3206f8cb971b021285147ac216be70d6761f',
+        },
+        'params': {
+            'skip_download': 'm3u8 download',
+            'noplaylist': True,
+        },
+    }, {
+        'url': 'https://www.viu.com/ott/th/th/vod/463125/Reborn-Rich',
+        'playlist_count': 14,
+        'info_dict': {
+            'id': '25501',
+            'title': 'Reborn Rich',
+            'description': 'md5:398bd25efb4c77af2cdc5271064af80e',
+        },
+        'params': {
+            'skip_download': 'm3u8 download',
+            'noplaylist': False,
+        },
     }]
 
     _AREA_ID = {
@@ -205,6 +234,7 @@ class ViuOTTIE(InfoExtractor):
         'zh-hk': 1,
         'zh-cn': 2,
         'en-us': 3,
+        'th': 4,
     }
 
     _user_token = None
