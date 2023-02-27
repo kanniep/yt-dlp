@@ -15,6 +15,7 @@ from ..utils import (
     UnsupportedError,
     determine_ext,
     dict_get,
+    extract_basic_auth,
     format_field,
     int_or_none,
     is_html,
@@ -863,20 +864,6 @@ class GenericIE(InfoExtractor):
                 'description': 'Browse King Machine videos & audio for sweet media. Your eyes will thank you.',
                 'thumbnail': r're:^https?://.*\.jpg$',
             },
-        },
-        {
-            # JWPlayer config passed as variable
-            'url': 'http://www.txxx.com/videos/3326530/ariele/',
-            'info_dict': {
-                'id': '3326530_hq',
-                'ext': 'mp4',
-                'title': 'ARIELE | Tube Cup',
-                'uploader': 'www.txxx.com',
-                'age_limit': 18,
-            },
-            'params': {
-                'skip_download': True,
-            }
         },
         {
             # Video.js embed, multiple formats
@@ -2386,9 +2373,8 @@ class GenericIE(InfoExtractor):
             **smuggled_data.get('http_headers', {})
         })
         new_url = full_response.geturl()
-        if new_url == urllib.parse.urlparse(url)._replace(scheme='https').geturl():
-            url = new_url
-        elif url != new_url:
+        url = urllib.parse.urlparse(url)._replace(scheme=urllib.parse.urlparse(new_url).scheme).geturl()
+        if new_url != extract_basic_auth(url)[0]:
             self.report_following_redirect(new_url)
             if force_videoid:
                 new_url = smuggle_url(new_url, {'force_videoid': force_videoid})
@@ -2637,11 +2623,11 @@ class GenericIE(InfoExtractor):
 
         # Look for generic KVS player (before json-ld bc of some urls that break otherwise)
         found = self._search_regex((
-            r'<script\b[^>]+?\bsrc\s*=\s*(["\'])https?://(?:\S+?/)+kt_player\.js\?v=(?P<ver>\d+(?:\.\d+)+)\1[^>]*>',
-            r'kt_player\s*\(\s*(["\'])(?:(?!\1)[\w\W])+\1\s*,\s*(["\'])https?://(?:\S+?/)+kt_player\.swf\?v=(?P<ver>\d+(?:\.\d+)+)\2\s*,',
+            r'<script\b[^>]+?\bsrc\s*=\s*(["\'])https?://(?:(?!\1)[^?#])+/kt_player\.js\?v=(?P<ver>\d+(?:\.\d+)+)\1[^>]*>',
+            r'kt_player\s*\(\s*(["\'])(?:(?!\1)[\w\W])+\1\s*,\s*(["\'])https?://(?:(?!\2)[^?#])+/kt_player\.swf\?v=(?P<ver>\d+(?:\.\d+)+)\2\s*,',
         ), webpage, 'KVS player', group='ver', default=False)
         if found:
-            self.report_detected('KWS Player')
+            self.report_detected('KVS Player')
             if found.split('.')[0] not in ('4', '5', '6'):
                 self.report_warning(f'Untested major version ({found}) in player engine - download may fail.')
             return [self._extract_kvs(url, webpage, video_id)]
