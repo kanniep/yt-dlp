@@ -1420,7 +1420,7 @@ from .patreon import (
     PatreonIE,
     PatreonCampaignIE
 )
-from .pbs import PBSIE
+from .pbs import PBSIE, PBSKidsIE
 from .pearvideo import PearVideoIE
 from .peekvids import PeekVidsIE, PlayVidsIE
 from .peertube import (
@@ -1709,6 +1709,7 @@ from .ruv import (
     RuvIE,
     RuvSpilaIE
 )
+from .s4c import S4CIE
 from .safari import (
     SafariIE,
     SafariApiIE,
@@ -2363,6 +2364,7 @@ from .weyyak import WeyyakIE
 from .whyp import WhypIE
 from .wikimedia import WikimediaIE
 from .willow import WillowIE
+from .wimbledon import WimbledonIE
 from .wimtv import WimTVIE
 from .whowatch import WhoWatchIE
 from .wistia import (
