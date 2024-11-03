@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -12,8 +13,7 @@ import sys
 from dataclasses import dataclass
 from zipimport import zipimporter
 
-from .compat import functools  # isort: split
-from .compat import compat_realpath, compat_shlex_quote
+from .compat import compat_realpath
 from .networking import Request
 from .networking.exceptions import HTTPError, network_exceptions
 from .utils import (
@@ -69,6 +69,10 @@ def _get_variant_and_executable_path():
             # Ref: https://en.wikipedia.org/wiki/Uname#Examples
             if machine[1:] in ('x86', 'x86_64', 'amd64', 'i386', 'i686'):
                 machine = '_x86' if platform.architecture()[0][:2] == '32' else ''
+            # sys.executable returns a /tmp/ path for staticx builds (linux_static)
+            # Ref: https://staticx.readthedocs.io/en/latest/usage.html#run-time-information
+            if static_exe_path := os.getenv('STATICX_PROG_PATH'):
+                path = static_exe_path
         return f'{remove_end(sys.platform, "32")}{machine}_exe', path
 
     path = os.path.dirname(__file__)
@@ -99,7 +103,6 @@ def current_git_head():
 
 _FILE_SUFFIXES = {
     'zip': '',
-    'py2exe': '_min.exe',
     'win_exe': '.exe',
     'win_x86_exe': '_x86.exe',
     'darwin_exe': '_macos',
@@ -113,8 +116,9 @@ _NON_UPDATEABLE_REASONS = {
     **{variant: None for variant in _FILE_SUFFIXES},  # Updatable
     **{variant: f'Auto-update is not supported for unpackaged {name} executable; Re-download the latest release'
        for variant, name in {'win32_dir': 'Windows', 'darwin_dir': 'MacOS', 'linux_dir': 'Linux'}.items()},
+    'py2exe': 'py2exe is no longer supported by yt-dlp; This executable cannot be updated',
     'source': 'You cannot update when running from source code; Use git to pull the latest changes',
-    'unknown': 'You installed yt-dlp with a package manager or setup.py; Use that to update',
+    'unknown': 'You installed yt-dlp from a manual build or with a package manager; Use that to update',
     'other': 'You are using an unofficial build of yt-dlp; Build the executable again',
 }
 
@@ -131,20 +135,18 @@ def _get_binary_name():
 
 
 def _get_system_deprecation():
-    MIN_SUPPORTED, MIN_RECOMMENDED = (3, 8), (3, 8)
+    MIN_SUPPORTED, MIN_RECOMMENDED = (3, 9), (3, 9)
 
     if sys.version_info > MIN_RECOMMENDED:
         return None
 
     major, minor = sys.version_info[:2]
-    if sys.version_info < MIN_SUPPORTED:
-        msg = f'Python version {major}.{minor} is no longer supported'
-    else:
-        msg = (f'Support for Python version {major}.{minor} has been deprecated. '
-               '\nYou may stop receiving updates on this version at any time')
+    PYTHON_MSG = f'Please update to Python {".".join(map(str, MIN_RECOMMENDED))} or above'
 
-    major, minor = MIN_RECOMMENDED
-    return f'{msg}! Please update to Python {major}.{minor} or above'
+    if sys.version_info < MIN_SUPPORTED:
+        return f'Python version {major}.{minor} is no longer supported! {PYTHON_MSG}'
+
+    return f'Support for Python version {major}.{minor} has been deprecated. {PYTHON_MSG}'
 
 
 def _sha256_file(path):
@@ -177,26 +179,26 @@ class UpdateInfo:
     Can be created by `query_update()` or manually.
 
     Attributes:
-        tag                The release tag that will be updated to. If from query_update,
-                        the value is after API resolution and update spec processing.
-                        The only property that is required.
-        version            The actual numeric version (if available) of the binary to be updated to,
-                        after API resolution and update spec processing. (default: None)
-        requested_version  Numeric version of the binary being requested (if available),
-                        after API resolution only. (default: None)
-        commit             Commit hash (if available) of the binary to be updated to,
-                        after API resolution and update spec processing. (default: None)
-                        This value will only match the RELEASE_GIT_HEAD of prerelease builds.
-        binary_name        Filename of the binary to be updated to. (default: current binary name)
-        checksum           Expected checksum (if available) of the binary to be
-                        updated to. (default: None)
+        tag                 The release tag that will be updated to. If from query_update,
+                            the value is after API resolution and update spec processing.
+                            The only property that is required.
+        version             The actual numeric version (if available) of the binary to be updated to,
+                            after API resolution and update spec processing. (default: None)
+        requested_version   Numeric version of the binary being requested (if available),
+                            after API resolution only. (default: None)
+        commit              Commit hash (if available) of the binary to be updated to,
+                            after API resolution and update spec processing. (default: None)
+                            This value will only match the RELEASE_GIT_HEAD of prerelease builds.
+        binary_name         Filename of the binary to be updated to. (default: current binary name)
+        checksum            Expected checksum (if available) of the binary to be
+                            updated to. (default: None)
     """
     tag: str
     version: str | None = None
     requested_version: str | None = None
     commit: str | None = None
 
-    binary_name: str | None = _get_binary_name()
+    binary_name: str | None = _get_binary_name()  # noqa: RUF009: Always returns the same value
     checksum: str | None = None
 
     _has_update = True
@@ -206,13 +208,14 @@ class Updater:
     # XXX: use class variables to simplify testing
     _channel = CHANNEL
     _origin = ORIGIN
+    _update_sources = UPDATE_SOURCES
 
     def __init__(self, ydl, target: str | None = None):
         self.ydl = ydl
         # For backwards compat, target needs to be treated as if it could be None
         self.requested_channel, sep, self.requested_tag = (target or self._channel).rpartition('@')
         # Check if requested_tag is actually the requested repo/channel
-        if not sep and ('/' in self.requested_tag or self.requested_tag in UPDATE_SOURCES):
+        if not sep and ('/' in self.requested_tag or self.requested_tag in self._update_sources):
             self.requested_channel = self.requested_tag
             self.requested_tag: str = None  # type: ignore (we set it later)
         elif not self.requested_channel:
@@ -237,11 +240,11 @@ class Updater:
                 self._block_restart('Automatically restarting into custom builds is disabled for security reasons')
         else:
             # Check if requested_channel resolves to a known repository or else raise
-            self.requested_repo = UPDATE_SOURCES.get(self.requested_channel)
+            self.requested_repo = self._update_sources.get(self.requested_channel)
             if not self.requested_repo:
                 self._report_error(
                     f'Invalid update channel {self.requested_channel!r} requested. '
-                    f'Valid channels are {", ".join(UPDATE_SOURCES)}', True)
+                    f'Valid channels are {", ".join(self._update_sources)}', True)
 
         self._identifier = f'{detect_variant()} {system_identifier()}'
 
@@ -305,6 +308,7 @@ class Updater:
                 if isinstance(error, HTTPError) and error.status == 404:
                     continue
                 self._report_network_error(f'fetch update spec: {error}')
+                return None
 
         self._report_error(
             f'The requested tag {self.requested_tag} does not exist for {self.requested_repo}', True)
@@ -334,7 +338,8 @@ class Updater:
                     continue
 
                 self._report_error(
-                    f'yt-dlp cannot be updated to {resolved_tag} since you are on an older Python version', True)
+                    f'yt-dlp cannot be updated to {resolved_tag} since you are on an older Python version '
+                    'or your operating system is not compatible with the requested build', True)
                 return None
 
         return resolved_tag
@@ -350,7 +355,9 @@ class Updater:
         return a == b
 
     def query_update(self, *, _output=False) -> UpdateInfo | None:
-        """Fetches and returns info about the available update"""
+        """Fetches info about the available update
+        @returns   An `UpdateInfo` if there is an update available, else None
+        """
         if not self.requested_repo:
             self._report_error('No target repository could be determined from input')
             return None
@@ -374,7 +381,7 @@ class Updater:
             has_update = False
 
         resolved_tag = requested_version if self.requested_tag == 'latest' else self.requested_tag
-        current_label = _make_label(self._origin, self._channel.partition("@")[2] or self.current_version, self.current_version)
+        current_label = _make_label(self._origin, self._channel.partition('@')[2] or self.current_version, self.current_version)
         requested_label = _make_label(self.requested_repo, resolved_tag, requested_version)
         latest_or_requested = f'{"Latest" if self.requested_tag == "latest" else "Requested"} version: {requested_label}'
         if not has_update:
@@ -428,7 +435,9 @@ class Updater:
             checksum=checksum)
 
     def update(self, update_info=NO_DEFAULT):
-        """Update yt-dlp executable to the latest version"""
+        """Update yt-dlp executable to the latest version
+        @param update_info  `UpdateInfo | None` as returned by query_update()
+        """
         if update_info is NO_DEFAULT:
             update_info = self.query_update(_output=True)
         if not update_info:
@@ -493,7 +502,7 @@ class Updater:
                 return os.rename(old_filename, self.filename)
 
         variant = detect_variant()
-        if variant.startswith('win') or variant == 'py2exe':
+        if variant.startswith('win'):
             atexit.register(Popen, f'ping 127.0.0.1 -n 5 -w 1000 & del /F "{old_filename}"',
                             shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         elif old_filename:
@@ -506,7 +515,7 @@ class Updater:
                 os.chmod(self.filename, mask)
             except OSError:
                 return self._report_error(
-                    f'Unable to set permissions. Run: sudo chmod a+rx {compat_shlex_quote(self.filename)}')
+                    f'Unable to set permissions. Run: sudo chmod a+rx {shell_quote(self.filename)}')
 
         self.ydl.to_screen(f'Updated yt-dlp to {update_label}')
         return True
@@ -548,9 +557,10 @@ class Updater:
     def _report_network_error(self, action, delim=';', tag=None):
         if not tag:
             tag = self.requested_tag
+        path = tag if tag == 'latest' else f'tag/{tag}'
         self._report_error(
-            f'Unable to {action}{delim} visit  https://github.com/{self.requested_repo}/releases/'
-            + tag if tag == "latest" else f"tag/{tag}", True)
+            f'Unable to {action}{delim} visit  '
+            f'https://github.com/{self.requested_repo}/releases/{path}', True)
 
     # XXX: Everything below this line in this class is deprecated / for compat only
     @property
